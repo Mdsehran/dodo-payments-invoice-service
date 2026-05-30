@@ -1,0 +1,16 @@
+[package]
+name = "mock_psp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mock_psp"
+path = "src/main.rs"
+
+[dependencies]
+tokio  = { workspace = true }
+axum   = { workspace = true }
+serde  = { workspace = true }
+serde_json = { workspace = true }
+uuid   = { workspace = true }
+anyhow = { workspace = true }

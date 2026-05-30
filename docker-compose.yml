@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dodo
+      POSTGRES_PASSWORD: dodo_secret
+      POSTGRES_DB: dodo_payments
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dodo -d dodo_payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mock_psp:
+    build:
+      context: .
+      dockerfile: mock_psp/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+
+  invoice_service:
+    build:
+      context: .
+      dockerfile: invoice_service/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://dodo:dodo_secret@postgres:5432/dodo_payments
+      MOCK_PSP_URL: http://mock_psp:3001
+      PORT: "3000"
+      WEBHOOK_SIGNING_SECRET: "northstar_demo_webhook_secret_2026"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock_psp:
+        condition: service_started
+
+volumes:
+  pgdata:

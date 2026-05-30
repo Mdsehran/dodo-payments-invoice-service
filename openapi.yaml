@@ -1,0 +1,240 @@
+openapi: "3.0.3"
+info:
+  title: Dodo Payments Invoice Service
+  version: "1.0.0"
+  description: Invoice & Payment Service API
+
+servers:
+  - url: http://localhost:3000
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:    { type: string, example: "NOT_FOUND" }
+            message: { type: string, example: "Invoice not found" }
+
+    Customer:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        name:        { type: string }
+        email:       { type: string }
+        created_at:  { type: string, format: date-time }
+
+    LineItem:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        invoice_id:        { type: string, format: uuid }
+        description:       { type: string }
+        quantity:          { type: integer }
+        unit_amount_cents: { type: integer, description: "Amount in USD cents" }
+
+    Invoice:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        business_id:  { type: string, format: uuid }
+        customer_id:  { type: string, format: uuid }
+        state:
+          type: string
+          enum: [draft, open, processing, paid, void, uncollectible]
+        total_cents:  { type: integer, description: "Server-computed total in USD cents" }
+        due_date:     { type: string, format: date }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+
+    InvoiceResponse:
+      type: object
+      properties:
+        invoice:    { $ref: '#/components/schemas/Invoice' }
+        line_items:
+          type: array
+          items: { $ref: '#/components/schemas/LineItem' }
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200": { description: ok }
+
+  /customers:
+    post:
+      summary: Create customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name:  { type: string }
+                email: { type: string, format: email }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        "409": { description: Email already exists }
+    get:
+      summary: List customers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Customer' }
+
+  /customers/{id}:
+    get:
+      summary: Get customer by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        "404": { description: Not found }
+
+  /invoices:
+    post:
+      summary: Create invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, due_date, line_items]
+              properties:
+                customer_id: { type: string, format: uuid }
+                due_date:    { type: string, format: date }
+                line_items:
+                  type: array
+                  items:
+                    type: object
+                    required: [description, quantity, unit_amount_cents]
+                    properties:
+                      description:       { type: string }
+                      quantity:          { type: integer, minimum: 1 }
+                      unit_amount_cents: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceResponse' }
+    get:
+      summary: List invoices
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [draft, open, processing, paid, void, uncollectible]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Invoice' }
+
+  /invoices/{id}:
+    get:
+      summary: Get invoice by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceResponse' }
+        "404": { description: Not found }
+
+  /invoices/{id}/void:
+    post:
+      summary: Void an invoice (draft or open only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        "422": { description: Invalid state transition }
+
+  /invoices/{id}/pay:
+    post:
+      summary: Attempt payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+          description: Unique key per payment attempt. Retrying with same key returns cached response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card_token]
+              properties:
+                card_token: { type: string, example: "tok_success" }
+      responses:
+        "200":
+          description: Payment succeeded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_attempt_id: { type: string, format: uuid }
+                  invoice_id:         { type: string, format: uuid }
+                  state:              { type: string, example: "paid" }
+                  psp_ref:            { type: string }
+        "202":
+          description: Payment pending (PSP timeout — poll GET /invoices/{id})
+        "402":
+          description: Payment failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  failure_code: { type: string, example: "card_declined" }
+        "409": { description: Idempotency key conflict (different request body) }
+        "422": { description: Invalid state transition }
